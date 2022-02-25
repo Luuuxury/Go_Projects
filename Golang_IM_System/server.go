@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"sync"
 )
@@ -37,12 +38,9 @@ func (this *Server) Start() {
 		fmt.Println("net.Listen err:", err)
 		return
 	}
-
 	// close listener socket
 	defer listener.Close()
-
 	go this.ListenServerMessage()
-
 	// accept 如果接收到连接，就去处理业务 --> this.Handler(conn)
 	for {
 		conn, err := listener.Accept()
@@ -52,27 +50,6 @@ func (this *Server) Start() {
 		}
 		go this.Handler(conn)
 	}
-
-}
-
-// Handler 处理业务
-func (this *Server) Handler(conn net.Conn) {
-	// 用户上线，将用户加入到OnlineMap
-	user := NewUser(conn)
-	this.mapLock.Lock()
-	this.OnlineMap[user.Name] = user
-	this.mapLock.Unlock()
-	// 广播当前消息
-	this.BroadCast(user, "用户上线了")
-
-	// 发送完消息，先让当前 Handler 阻塞，否则他的子goroutine 都得GG
-	select {}
-}
-
-// BroadCast 广播方法
-func (this *Server) BroadCast(user *User, msg string) {
-	sendMsg := "[" + user.Addr + "]" + user.Name + ":" + msg
-	this.Message <- sendMsg
 }
 
 // ListenServerMessage 持续监听
@@ -85,4 +62,43 @@ func (this *Server) ListenServerMessage() {
 		}
 		this.mapLock.Unlock()
 	}
+}
+
+// Handler 处理业务
+func (this *Server) Handler(conn net.Conn) {
+	// 用户上线，将用户加入到OnlineMap
+	user := NewUser(conn)
+	this.mapLock.Lock()
+	this.OnlineMap[user.Name] = user
+	this.mapLock.Unlock()
+	// 一个用户上线了就向其他用户广播一下
+	this.BroadCast(user, "用户上线了")
+
+	// 实现接收一个用户的消息，然后广播这个用户的消息
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := conn.Read(buf)
+			if n == 0 {
+				this.BroadCast(user, "下线")
+			}
+			if err != nil && err != io.EOF {
+				fmt.Println("Conn Read err:", err)
+				return
+			}
+			// 提取用户发过来的消息（去除'\n'）
+			msg := string(buf[:n-1])
+			this.BroadCast(user, msg)
+		}
+
+	}()
+
+	// 发送完消息，先让当前 Handler 阻塞，否则他的子goroutine 都得GG
+	select {}
+}
+
+// BroadCast 广播方法
+func (this *Server) BroadCast(user *User, msg string) {
+	sendMsg := "[" + user.Addr + "]" + user.Name + ":" + msg
+	this.Message <- sendMsg
 }
