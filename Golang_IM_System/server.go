@@ -67,12 +67,8 @@ func (this *Server) ListenServerMessage() {
 // Handler 处理业务
 func (this *Server) Handler(conn net.Conn) {
 	// 用户上线，将用户加入到OnlineMap
-	user := NewUser(conn)
-	this.mapLock.Lock()
-	this.OnlineMap[user.Name] = user
-	this.mapLock.Unlock()
-	// 一个用户上线了就向其他用户广播一下
-	this.BroadCast(user, "用户上线了")
+	user := NewUser(conn, this)
+	user.Online()
 
 	// 实现接收一个用户的消息，然后广播这个用户的消息
 	go func() {
@@ -80,19 +76,18 @@ func (this *Server) Handler(conn net.Conn) {
 		for {
 			n, err := conn.Read(buf)
 			if n == 0 {
-				this.BroadCast(user, "下线")
+				user.Offline()
 			}
 			if err != nil && err != io.EOF {
 				fmt.Println("Conn Read err:", err)
 				return
 			}
 			// 提取用户发过来的消息（去除'\n'）
-			msg := string(buf[:n-1])
-			this.BroadCast(user, msg)
+			msg := string(buf[:n-3])
+			user.DoMessage(msg)
 		}
 
 	}()
-
 	// 发送完消息，先让当前 Handler 阻塞，否则他的子goroutine 都得GG
 	select {}
 }
