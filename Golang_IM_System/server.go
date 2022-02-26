@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"runtime"
 	"sync"
+	"time"
 )
 
 type Server struct {
 	Ip   string
 	Port int
 	// 在线的用户列表
-	OnlineMap map[string]*User
-	mapLock   sync.RWMutex //RWMutex（读写锁）
+	OnlineMap map[string]*User // key 值就是用户名，value 是用户对象
+	mapLock   sync.RWMutex     // 因为OnlineMap 是个全局的可能需要加一个锁
 
 	//消息广播的channel
 	Message chan string
@@ -40,7 +42,7 @@ func (this *Server) Start() {
 	}
 	// close listener socket
 	defer listener.Close()
-	go this.ListenServerMessage()
+	go this.ListenMessage()
 	// accept 如果接收到连接，就去处理业务 --> this.Handler(conn)
 	for {
 		conn, err := listener.Accept()
@@ -52,8 +54,8 @@ func (this *Server) Start() {
 	}
 }
 
-// ListenServerMessage 持续监听
-func (this *Server) ListenServerMessage() {
+// ListenMessage Server启动后持续监听 写入 clis.C 管道
+func (this *Server) ListenMessage() {
 	for {
 		msg := <-this.Message
 		this.mapLock.Lock()
@@ -69,7 +71,7 @@ func (this *Server) Handler(conn net.Conn) {
 	// 用户上线，将用户加入到OnlineMap
 	user := NewUser(conn, this)
 	user.Online()
-
+	isAlive := make(chan bool)
 	// 实现接收一个用户的消息，然后广播这个用户的消息
 	go func() {
 		buf := make([]byte, 4096)
@@ -77,19 +79,31 @@ func (this *Server) Handler(conn net.Conn) {
 			n, err := conn.Read(buf)
 			if n == 0 {
 				user.Offline()
+				return
 			}
 			if err != nil && err != io.EOF {
-				fmt.Println("Conn Read err:", err)
+				fmt.Println("Connect Read err", err)
 				return
 			}
 			// 提取用户发过来的消息（去除'\n'）
-			msg := string(buf[:n-3])
+			msg := string(buf[:n-1])
 			user.DoMessage(msg)
+			isAlive <- true
 		}
-
 	}()
-	// 发送完消息，先让当前 Handler 阻塞，否则他的子goroutine 都得GG
-	select {}
+	// 判断用户是否活跃
+	for {
+		// 只要所有 case 不执行，select 就一直阻塞，当isAlive channle 中有True 时候，第一个case执行 打破原有的 select 阻塞，重新刷新select
+		select {
+		case <-isAlive:
+			// 什么也不用做
+		case <-time.After(time.Second * 60):
+			user.SendMsg("你被踢了")
+			close(user.C) //销毁使用的资源
+			conn.Close()
+			runtime.Goexit() // return
+		}
+	}
 }
 
 // BroadCast 广播方法
