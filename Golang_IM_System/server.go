@@ -97,7 +97,7 @@ func (this *Server) Handler(conn net.Conn) {
 		select {
 		case <-isAlive:
 			// 什么也不用做
-		case <-time.After(time.Second * 60):
+		case <-time.After(time.Second * 600):
 			user.SendMsg("你被踢了")
 			close(user.C) //销毁使用的资源
 			conn.Close()

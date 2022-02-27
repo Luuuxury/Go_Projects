@@ -73,6 +73,22 @@ func (this *User) DoMessage(msg string) {
 			this.SendMsg("您已经修改用户名为:" + this.Name + "\n")
 		}
 
+	} else if len(msg) > 3 && msg[:3] == "to|" {
+		// 1.格式不对
+		remoteName := strings.Split(msg, "|")[1]
+		if remoteName == "" {
+			this.SendMsg("消息格式不对")
+		}
+		// 2. 发送给谁
+		remoteUser, ok := this.server.OnlineMap[remoteName]
+		if !ok {
+			this.SendMsg("您发送的用户名不存在")
+			return
+		}
+		// 3. 发送
+		content := strings.Split(msg, "|")[2]
+		remoteUser.SendMsg(this.Name + "给您发消息:" + content + "\n")
+
 	} else {
 		this.server.BroadCast(this, msg)
 	}
